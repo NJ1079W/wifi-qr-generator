@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Wi‑Fi QR Code Generator</title>
+  <style>
+    :root{--bg:#0f172a;--card:#0b1220;--muted:#9aa4b2;--accent:#7c3aed}
+    *{box-sizing:border-box;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    body{margin:0;background:linear-gradient(180deg,#071028 0%, #071b2b 100%);color:#e6eef6;min-height:100vh;padding:28px;display:flex;align-items:center;justify-content:center}
+    .wrap{width:100%;max-width:980px;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));border-radius:12px;padding:20px;box-shadow:0 8px 30px rgba(2,6,23,0.6)}
+    h1{margin:0 0 10px;font-size:20px}
+    .grid{display:grid;grid-template-columns:1fr 340px;gap:18px}
+    label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+    input[type="text"], input[type="password"], select{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    .row{margin-bottom:12px}
+    .controls{display:flex;gap:8px;align-items:center}
+    button{background:var(--accent);border:none;padding:10px 12px;border-radius:9px;color:white;cursor:pointer;font-weight:600}
+    button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06)}
+    .card{background:rgba(255,255,255,0.02);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.02)}
+    .preview{display:flex;flex-direction:column;align-items:center;gap:10px}
+    .meta{font-size:13px;color:var(--muted)}
+    footer{margin-top:12px;font-size:13px;color:var(--muted)}
+    .small{font-size:12px;color:var(--muted)}
+    .inputs{display:grid;gap:10px}
+    .field-inline{display:flex;gap:8px}
+    @media (max-width:880px){.grid{grid-template-columns:1fr;}.preview{flex-direction:row}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Wi‑Fi QR Code Generator</h1>
+    <p class="small">Enter your network details and generate a Wi‑Fi QR that phones can scan to join automatically.</p>
+
+    <div class="grid" role="application" aria-label="WiFi QR generator">
+      <div>
+        <div class="card">
+          <div class="inputs" role="form">
+            <div class="row">
+              <label for="ssid">Network name (SSID)</label>
+              <input id="ssid" type="text" placeholder="e.g. My Home WiFi" value="" />
+            </div>
+
+            <div class="row">
+              <label for="security">Encryption</label>
+              <select id="security">
+                <option value="WPA">WPA/WPA2</option>
+                <option value="WEP">WEP</option>
+                <option value="nopass">None (open)</option>
+              </select>
+            </div>
+
+            <div class="row">
+              <label for="password">Password</label>
+              <input id="password" type="password" placeholder="Enter password (leave blank for open)" />
+            </div>
+
+            <div class="row field-inline">
+              <div style="flex:1">
+                <label for="hidden">Hidden network</label>
+                <select id="hidden">
+                  <option value="false">No</option>
+                  <option value="true">Yes</option>
+                </select>
+              </div>
+              <div style="width:140px">
+                <label for="size">QR size</label>
+                <select id="size">
+                  <option value="200">200 px</option>
+                  <option value="300" selected>300 px</option>
+                  <option value="400">400 px</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="row controls">
+              <button id="generate">Generate QR</button>
+              <button id="download" class="ghost">Download PNG</button>
+              <button id="copy" class="ghost">Copy string</button>
+              <button id="clear" class="ghost">Clear</button>
+            </div>
+
+            <div class="row">
+              <label>Raw Wi‑Fi QR string</label>
+              <div id="raw" class="card small" style="word-break:break-all;min-height:36px;padding:8px"></div>
+            </div>
+
+            <footer>Format follows: <code>WIFI:T:&lt;WPA|WEP|nopass&gt;;S:&lt;ssid&gt;;P:&lt;password&gt;;H:&lt;true|false&gt;;;</code></footer>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card preview">
+          <div id="qrcodeHolder" style="background:white;padding:12px;border-radius:12px"></div>
+          <div class="meta">Scan preview — point your phone camera at the QR.</div>
+          <div class="meta" id="status"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- QRious from CDN (tiny, produces canvas and supports toDataURL) -->
+  <script src="https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js"></script>
+  <script>
+    // helpers
+    function escapeWifi(value) {
+      if (value == null) return '';
+      // Per the common WiFi QR recommendations escape the chars: \\ ; , : "
+      return String(value)
+        .replace(/\\/g, "\\\\")
+        .replace(/;/g, "\\;")
+        .replace(/,/g, "\\,")
+        .replace(/:/g, "\\:")
+        .replace(/\"/g, '\\\"');
+    }
+
+    function buildWifiString(ssid, type, password, hidden) {
+      ssid = escapeWifi(ssid);
+      password = escapeWifi(password);
+
+      // According to the accepted format: WIFI:T:WPA;S:SSID;P:password;H:true;;
+      // If type is 'nopass' then omit the P field (many apps accept P:; but better omit)
+      let parts = [];
+      parts.push('WIFI:');
+      parts.push('T:' + (type || 'WPA') + ';');
+      parts.push('S:' + ssid + ';');
+      if (type !== 'nopass' && password) parts.push('P:' + password + ';');
+      if (hidden === 'true' || hidden === true) parts.push('H:true;');
+      parts.push(';');
+      return parts.join('');
+    }
+
+    // UI
+    const qHolder = document.getElementById('qrcodeHolder');
+    const ssidEl = document.getElementById('ssid');
+    const secEl = document.getElementById('security');
+    const passEl = document.getElementById('password');
+    const hiddenEl = document.getElementById('hidden');
+    const sizeEl = document.getElementById('size');
+    const rawEl = document.getElementById('raw');
+    const statusEl = document.getElementById('status');
+
+    // setup QRious
+    let qr = new QRious({element: document.createElement('canvas'), size: 300, level: 'H'});
+    qHolder.appendChild(qr.element);
+
+    function updateStatus(msg, isError) {
+      statusEl.textContent = msg || '';
+      statusEl.style.color = isError ? '#ff9b9b' : '';
+    }
+
+    function generate() {
+      const ssid = ssidEl.value.trim();
+      const type = secEl.value;
+      const pass = passEl.value;
+      const hidden = hiddenEl.value;
+      const size = parseInt(sizeEl.value, 10) || 300;
+
+      if (!ssid) {
+        updateStatus('Please enter an SSID.');
+        return;
+      }
+
+      if (type !== 'nopass' && !pass) {
+        // allow empty password but warn
+        updateStatus('Warning: encryption selected but no password provided.', true);
+      } else {
+        updateStatus('');
+      }
+
+      const wifiString = buildWifiString(ssid, type, pass, hidden);
+      rawEl.textContent = wifiString;
+
+      qr.size = size;
+      qr.value = wifiString;
+
+      updateStatus('QR generated — you can scan or download it.');
+    }
+
+    document.getElementById('generate').addEventListener('click', generate);
+
+    document.getElementById('download').addEventListener('click', function () {
+      // uses canvas toDataURL
+      const data = qr.toDataURL();
+      const a = document.createElement('a');
+      a.href = data;
+      const safeSSID = (ssidEl.value || 'wifi').replace(/[^a-z0-9\-_.]/gi, '_');
+      a.download = `wifi-qr-${safeSSID}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+
+    document.getElementById('copy').addEventListener('click', async function () {
+      const text = rawEl.textContent || '';
+      try {
+        await navigator.clipboard.writeText(text);
+        updateStatus('Raw string copied to clipboard.');
+      } catch (e) {
+        updateStatus('Copy failed — your browser may block clipboard access.', true);
+      }
+    });
+
+    document.getElementById('clear').addEventListener('click', function () {
+      ssidEl.value = '';
+      passEl.value = '';
+      rawEl.textContent = '';
+      qr.value = '';
+      updateStatus('Cleared.');
+    });
+
+    // quick live-generate when pressing Enter in inputs
+    [ssidEl, passEl].forEach(el => el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') generate(); }));
+
+    // seed example for convenience
+    ssidEl.value = '';
+  </script>
+</body>
+</html>
